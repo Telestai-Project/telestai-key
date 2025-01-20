@@ -1,19 +1,30 @@
-//Gives us meta data about coins/chains
-import { chains } from "@hyperbitjs/chains";
-
-//bip39 from mnemonic to seed
-import * as bip39 from "bip39";
-
+import {
+  mnemonicToSeedSync,
+  generateMnemonic as bip39GenerateMnemonic,
+  validateMnemonic,
+  entropyToMnemonic as bip39EntropyToMnemonic,
+  wordlists,
+} from "bip39";
+import { BIP32Factory, BIP32Interface } from "bip32";
+import * as ecc from "tiny-secp256k1";
+import { Buffer } from "buffer";
 const CoinKey = require("coinkey");
 
-//From seed to key
-//const HDKey = require("hdkey");
-import HDKey from "hdkey";
-import { IAddressObject } from "./types";
+// Initialize bip32 with tiny-secp256k1
+const bip32 = BIP32Factory(ecc);
 
-//Could not declare Network as enum, something wrong with parcel bundler
+// Define IAddressObject type
+export interface IAddressObject {
+  address: string;
+  path: string;
+  privateKey: string;
+  WIF: string;
+}
+
+// Define Network type
 export type Network = "tls";
 
+// Define network details
 function getNetwork(name: Network) {
   if (name !== "tls") {
     throw new Error("network must be 'tls'");
@@ -27,11 +38,12 @@ function getNetwork(name: Network) {
     bip44: 10117,
     private: 0x80,
     public: 0x42,
-    scripthash: 0x7F,
+    scripthash: 0x7f,
+    wif: 0x80, // Added `wif` property
   };
 }
+
 /**
- *
  * @param network
  * @returns the coin type for the network (blockchain)
  */
@@ -39,6 +51,7 @@ export function getCoinType(network: Network) {
   const chain = getNetwork(network);
   return chain.bip44;
 }
+
 /**
  * @param network - should have value "tls"
  * @param mnemonic - your mnemonic
@@ -52,18 +65,16 @@ export function getAddressPair(
   position: number
 ) {
   const hdKey = getHDKey(network, mnemonic);
-  const coin_type = getCoinType(network);
+  const coinType = getCoinType(network);
 
-  //https://github.com/satoshilabs/slips/blob/master/slip-0044.md
-
-  //Syntax of BIP44
-  //m / purpose' / coin_type' / account' / change / address_index
-  const externalPath = `m/44'/${coin_type}'/${account}'/0/${position}`;
+  // Syntax of BIP44
+  // m / purpose' / coin_type' / account' / change / address_index
+  const externalPath = `m/44'/${coinType}'/${account}'/0/${position}`;
   const externalAddress = getAddressByPath(network, hdKey, externalPath);
 
-  //change address
-  const internalPath = `m/44'/${coin_type}'/${account}'/1/${position}`;
+  const internalPath = `m/44'/${coinType}'/${account}'/1/${position}`;
   const internalAddress = getAddressByPath(network, hdKey, internalPath);
+
   return {
     internal: internalAddress,
     external: externalAddress,
@@ -71,95 +82,87 @@ export function getAddressPair(
   };
 }
 
-export function getHDKey(network: Network, mnemonic: string): any {
+export function getHDKey(network: Network, mnemonic: string): BIP32Interface {
   const chain = getNetwork(network);
-  const seed = bip39.mnemonicToSeedSync(mnemonic).toString("hex");
-  //From the seed, get a hdKey, can we use CoinKey instead?
-  const hdKey = HDKey.fromMasterSeed(Buffer.from(seed, "hex"), chain.bip32);
-  return hdKey;
+  const seed = mnemonicToSeedSync(mnemonic);
+  return bip32.fromSeed(seed, chain);
 }
 
 export function getAddressByPath(
   network: Network,
-  hdKey: any,
+  hdKey: BIP32Interface,
   path: string
 ): IAddressObject {
   const chain = getNetwork(network);
-  const derived = hdKey.derive(path);
-  var ck2 = new CoinKey(derived.privateKey, chain);
+  const derived = hdKey.derivePath(path);
+
+  if (!derived.privateKey) {
+    throw new Error("Private key derivation failed");
+  }
+
+  const privateKeyBuffer = Buffer.from(derived.privateKey); // Explicit Buffer conversion
+  const ck = new CoinKey(privateKeyBuffer, chain);
 
   return {
-    address: ck2.publicAddress,
+    address: ck.publicAddress,
     path: path,
-    privateKey: ck2.privateKey.toString("hex"),
-    WIF: ck2.privateWif,
+    privateKey: privateKeyBuffer.toString("hex"), // Hex string
+    WIF: ck.privateWif,
   };
 }
 
-export function generateMnemonic() {
-  return bip39.generateMnemonic();
+export function generateMnemonic(): string {
+  return bip39GenerateMnemonic();
 }
 
-export function isMnemonicValid(mnemonic: string) {
-  //Check all languages
-  const wordlists = Object.values(bip39.wordlists);
+export function isMnemonicValid(mnemonic: string): boolean {
+  const allWordlists = Object.values(wordlists);
 
-  //If mnemonic is valid in any language, return true, otherwise false
-  for (const wordlist of wordlists) {
-    const v = bip39.validateMnemonic(mnemonic, wordlist);
-    if (v === true) {
+  for (const wordlist of allWordlists) {
+    if (validateMnemonic(mnemonic, wordlist as string[])) {
       return true;
     }
   }
   return false;
 }
-/**
- *
- * @param privateKeyWIF
- * @param network  should be "rvn" or "rvn-test"
- * @returns object {address, privateKey (hex), WIF}
- */
 
-export function getAddressByWIF(network: Network, privateKeyWIF: string) {
+/**
+ * @param privateKeyWIF
+ * @param network  should be "tls"
+ * @returns object {address, privateKey (hex), WIF, path}
+ */
+export function getAddressByWIF(network: Network, privateKeyWIF: string): IAddressObject {
   const coinKey = CoinKey.fromWif(privateKeyWIF);
   coinKey.versions = getNetwork(network);
 
   return {
     address: coinKey.publicAddress,
-    privateKey: coinKey.privateKey.toString("hex"),
+    privateKey: Buffer.from(coinKey.privateKey).toString("hex"), // Hex string
     WIF: coinKey.privateWif,
+    path: "N/A", // Path is not applicable for WIF-based addresses
   };
 }
 
-export const entropyToMnemonic = bip39.entropyToMnemonic;
+export const entropyToMnemonic = bip39EntropyToMnemonic;
 
-export function generateAddressObject(
-  network: Network = "tls"
-): IAddressObject {
+export function generateAddressObject(network: Network = "tls"): IAddressObject & { mnemonic: string; network: Network } {
   const mnemonic = generateMnemonic();
   const account = 0;
   const position = 0;
   const addressPair = getAddressPair(network, mnemonic, account, position);
-  const addressObject = addressPair.external;
 
-  const result = {
-    ...addressObject,
+  return {
+    ...addressPair.external,
     mnemonic,
-    network,
+    network, // Include the network property
   };
-  return result;
 }
 
-/**
- * Generates a random Address Object
- *
- * @deprecated use generateAddressObject
- * @param network
- * @returns
- */
 export function generateAddress(network: Network = "tls") {
   return generateAddressObject(network);
 }
+
+
 export default {
   entropyToMnemonic,
   generateAddress,
