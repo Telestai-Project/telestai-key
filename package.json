@@ -1,6 +1,6 @@
 {
   "name": "@telestai-project/telestai-key",
-  "version": "2.8.1",
+  "version": "2.8.2",
   "description": "Generate Telestai addresses from mnemonic code. BIP32, BIP39, BIP44",
   "source": "index.ts",
   "main": "dist/main.js",
@@ -20,7 +20,7 @@
     "BIP44",
     "BIP39"
   ],
-  "author": "Telestai Project / Zachary Price",
+  "author": "Telestai Project / Zachary Price / Takehiko",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/Telestai-Project/telestai-key/issues"
